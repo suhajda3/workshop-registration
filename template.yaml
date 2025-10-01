@@ -1,0 +1,778 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Workshop Registration System'
+
+Parameters:
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda function zip files
+  
+  DomainName:
+    Type: String
+    Description: Domain name for CORS Allow-Origin header (e.g., https://example.com)
+    Default: https://workshops.awscommunity.eu
+
+Resources:
+  # DynamoDB Tables
+  WorkshopsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Workshops
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  RegistrationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Registrations
+      AttributeDefinitions:
+        - AttributeName: ticketId
+          AttributeType: S
+        - AttributeName: workshopId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ticketId
+          KeyType: HASH
+        - AttributeName: workshopId
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: workshopId-index
+          KeySchema:
+            - AttributeName: workshopId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  ValidTicketsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ValidTickets
+      AttributeDefinitions:
+        - AttributeName: ticketId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ticketId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  AdminPermissionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AdminPermissions
+      AttributeDefinitions:
+        - AttributeName: ticketId
+          AttributeType: S
+        - AttributeName: workshopId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ticketId
+          KeyType: HASH
+        - AttributeName: workshopId
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: workshopId-index
+          KeySchema:
+            - AttributeName: workshopId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  RatingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Ratings
+      AttributeDefinitions:
+        - AttributeName: ticketId
+          AttributeType: S
+        - AttributeName: workshopId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ticketId
+          KeyType: HASH
+        - AttributeName: workshopId
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: workshopId-index
+          KeySchema:
+            - AttributeName: workshopId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # IAM Role for Lambda functions
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt WorkshopsTable.Arn
+                  - !GetAtt RegistrationsTable.Arn
+                  - !GetAtt ValidTicketsTable.Arn
+                  - !GetAtt RatingsTable.Arn
+                  - !GetAtt AdminPermissionsTable.Arn
+                  - !Sub "${RegistrationsTable.Arn}/index/*"
+                  - !Sub "${RatingsTable.Arn}/index/*"
+                  - !Sub "${AdminPermissionsTable.Arn}/index/*"
+
+  # Lambda Functions
+  AuthFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: workshop-auth
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: lambda/auth.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          VALID_TICKETS_TABLE: !Ref ValidTicketsTable
+          ADMIN_PERMISSIONS_TABLE: !Ref AdminPermissionsTable
+          ALLOWED_ORIGINS: !Sub "${DomainName}"
+
+  WorkshopsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: workshop-workshops
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: lambda/workshops.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          WORKSHOPS_TABLE: !Ref WorkshopsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          ADMIN_PERMISSIONS_TABLE: !Ref AdminPermissionsTable
+          ALLOWED_ORIGINS: !Sub "${DomainName}"
+
+  RegistrationsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: workshop-registrations
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: lambda/registrations.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          WORKSHOPS_TABLE: !Ref WorkshopsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          VALID_TICKETS_TABLE: !Ref ValidTicketsTable
+          ADMIN_PERMISSIONS_TABLE: !Ref AdminPermissionsTable
+          ALLOWED_ORIGINS: !Sub "${DomainName}"
+
+  AdminFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: workshop-admin
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: lambda/admin.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          WORKSHOPS_TABLE: !Ref WorkshopsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          VALID_TICKETS_TABLE: !Ref ValidTicketsTable
+          RATINGS_TABLE: !Ref RatingsTable
+          ADMIN_PERMISSIONS_TABLE: !Ref AdminPermissionsTable
+          ALLOWED_ORIGINS: !Sub "${DomainName}"
+
+  RatingsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: workshop-ratings
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: lambda/ratings.zip
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          RATINGS_TABLE: !Ref RatingsTable
+          WORKSHOPS_TABLE: !Ref WorkshopsTable
+          REGISTRATIONS_TABLE: !Ref RegistrationsTable
+          ADMIN_PERMISSIONS_TABLE: !Ref AdminPermissionsTable
+          ALLOWED_ORIGINS: !Sub "${DomainName}"
+
+  # API Gateway
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: workshop-registration-api
+      Description: "Workshop Registration System API"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # Lambda Permissions
+  AuthLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuthFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+  WorkshopsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WorkshopsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+  RegistrationsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RegistrationsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+  AdminLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AdminFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+  RatingsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RatingsFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+  # API Gateway Resources and Methods
+  AuthResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: auth
+
+  AuthLoginResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref AuthResource
+      PathPart: login
+
+  AuthLoginMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AuthLoginResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthFunction.Arn}/invocations'
+
+  WorkshopsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: workshops
+
+  WorkshopsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref WorkshopsResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WorkshopsFunction.Arn}/invocations'
+
+  RegistrationsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: registrations
+
+  RegistrationsPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RegistrationsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegistrationsFunction.Arn}/invocations'
+
+  RegistrationsTicketResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref RegistrationsResource
+      PathPart: '{ticketId}'
+
+  RegistrationsGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RegistrationsTicketResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegistrationsFunction.Arn}/invocations'
+
+  RegistrationsWorkshopResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref RegistrationsTicketResource
+      PathPart: '{workshopId}'
+
+  RegistrationsDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RegistrationsWorkshopResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RegistrationsFunction.Arn}/invocations'
+
+  RatingsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: ratings
+
+  RatingsPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RatingsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RatingsFunction.Arn}/invocations'
+
+  RatingsTicketResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref RatingsResource
+      PathPart: '{ticketId}'
+
+  RatingsGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RatingsTicketResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${RatingsFunction.Arn}/invocations'
+
+  AdminResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: admin
+
+  AdminRegistrationsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref AdminResource
+      PathPart: registrations
+
+  AdminRegistrationsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AdminRegistrationsResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AdminFunction.Arn}/invocations'
+
+  AdminRegistrationsTicketResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref AdminRegistrationsResource
+      PathPart: '{ticketId}'
+
+  AdminRegistrationsWorkshopResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref AdminRegistrationsTicketResource
+      PathPart: '{workshopId}'
+
+  AdminRegistrationsDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AdminRegistrationsWorkshopResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AdminFunction.Arn}/invocations'
+
+  # NEW: Admin Ratings Resource
+  AdminRatingsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref AdminResource
+      PathPart: ratings
+
+  AdminRatingsWorkshopResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref AdminRatingsResource
+      PathPart: '{workshopId}'
+
+  AdminRatingsGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AdminRatingsWorkshopResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AdminFunction.Arn}/invocations'
+
+  # CORS OPTIONS Methods
+  AuthLoginOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AuthLoginResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${DomainName}'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  WorkshopsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref WorkshopsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${DomainName}'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  RegistrationsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RegistrationsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,GET,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${DomainName}'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  RegistrationsTicketOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RegistrationsTicketResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${DomainName}'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  RegistrationsWorkshopOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RegistrationsWorkshopResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${DomainName}'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  RatingsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RatingsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${DomainName}'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  RatingsTicketOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref RatingsTicketResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${DomainName}'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  AdminRegistrationsOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AdminRegistrationsResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${DomainName}'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  AdminRegistrationsWorkshopOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AdminRegistrationsWorkshopResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${DomainName}'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # NEW: Admin Ratings CORS
+  AdminRatingsWorkshopOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AdminRatingsWorkshopResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: !Sub "'${DomainName}'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - AuthLoginMethod
+      - AuthLoginOptionsMethod
+      - WorkshopsMethod
+      - WorkshopsOptionsMethod
+      - RegistrationsPostMethod
+      - RegistrationsGetMethod
+      - RegistrationsDeleteMethod
+      - RegistrationsOptionsMethod
+      - RegistrationsTicketOptionsMethod
+      - RegistrationsWorkshopOptionsMethod
+      - AdminRegistrationsMethod
+      - AdminRegistrationsOptionsMethod
+      - AdminRegistrationsDeleteMethod
+      - AdminRegistrationsWorkshopOptionsMethod
+      - AdminRatingsGetMethod
+      - AdminRatingsWorkshopOptionsMethod
+      - RatingsPostMethod
+      - RatingsGetMethod
+      - RatingsOptionsMethod
+      - RatingsTicketOptionsMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: prod
+
+Outputs:
+  ApiUrl:
+    Description: URL of the API Gateway
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod'
