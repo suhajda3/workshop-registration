@@ -45,7 +45,6 @@ workshop-registration/
 ├── frontend/              # React application
 │   ├── src/              # Source code
 │   ├── public/           # Static assets
-│   ├── .env              # Environment configuration
 │   ├── package.json      # Dependencies
 │   ├── package-lock.json
 │   └── README.md
